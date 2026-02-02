@@ -1,0 +1,8 @@
+for .mid files
+
+    1. figure out which note layer is what you see in the game.
+    2. figure out which note layer represents star power phrases
+    3. 
+
+for .chart files
+    1. figure out how to extract notes and sp phrases from file
