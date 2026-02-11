@@ -1,4 +1,4 @@
-package main.java.ghopt.cli;
+package ghopt.cli;
 
 import ghopt.core.io.ChartParser;
 
