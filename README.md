@@ -56,3 +56,13 @@ I will most likely use Java to write the algorithm, since it is the
 language I'm most proficient in. I will then most likely use HTML, CSS,
 and JavaScript to create a website that will serve as a GUI for input
 and output.
+
+# TimeLine
+
+Now: CLI  tool that takes notes.chart file summarizes and outputs a PNG image that represents when the notes come up.
+
+Later: Convert chart into an internal chart model with notes phrases and star power data then right a basic optimizer (More of a skeleton).
+
+Later 2: Implement actual game rules into code to make an optimizer that outputs a star power activation plan.
+
+Later 3: Add Guitar Hero rules and website compatibility by swapping IO rules modules.
