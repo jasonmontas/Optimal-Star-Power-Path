@@ -131,6 +131,18 @@ public class ChartParser {
     }
 
     public static void generateChartImage(ChartData chartData, String outputFilePath) throws IOException {
+        generateChartImage(chartData, outputFilePath, null);
+    }
+
+    public static void generateChartImage(ChartData chartData, String outputFilePath, 
+                                          List<Integer> activationTimes) throws IOException {
+        // Create output directory if it doesn't exist
+        File outputFile = new File(outputFilePath);
+        File outputDir = outputFile.getParentFile();
+        if (outputDir != null && !outputDir.exists()) {
+            outputDir.mkdirs();
+        }
+
         int width = 4000; // Increased width to make the image wider
         int heightPerLayer = 600; // Reduced height per layer to make the image less tall
         int margin = 50;
@@ -187,6 +199,24 @@ public class ChartParser {
                 int xStart = margin + (layer == startLayer ? (phrase.start % (width * timeScale)) / timeScale : 0);
                 int xEnd = margin + (layer == endLayer ? (phrase.end % (width * timeScale)) / timeScale : width);
                 g.fillRect(xStart, layerOffset + margin, xEnd - xStart, heightPerLayer - 2 * margin);
+            }
+        }
+
+        // Draw activation times highlighted in green
+        if (activationTimes != null && !activationTimes.isEmpty()) {
+            g.setColor(new Color(0, 255, 0, 64)); // Green with transparency
+            for (int activationTime : activationTimes) {
+                int layer = activationTime / (width * timeScale);
+                int layerOffset = layer * heightPerLayer;
+                int xPos = margin + (activationTime % (width * timeScale)) / timeScale;
+                int activationWidth = 100; // Width of activation highlight
+                g.fillRect(xPos - activationWidth / 2, layerOffset + margin, activationWidth, heightPerLayer - 2 * margin);
+                
+                // Draw bright green border
+                g.setColor(Color.GREEN);
+                g.setStroke(new java.awt.BasicStroke(3));
+                g.drawRect(xPos - activationWidth / 2, layerOffset + margin, activationWidth, heightPerLayer - 2 * margin);
+                g.setColor(new Color(0, 255, 0, 64)); // Reset to transparent green
             }
         }
 
