@@ -5,7 +5,11 @@ import java.awt.image.BufferedImage;
 import java.io.*;
 import java.util.List;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Map;
+import java.nio.charset.StandardCharsets;
 import javax.imageio.ImageIO;
+import javax.sound.midi.*;
 import java.awt.geom.GeneralPath;
 
 public class ChartParser {
@@ -58,29 +62,83 @@ public class ChartParser {
         }
     }
 
+    public static class TempoEvent {
+        public int time;
+        public int microsecondsPerQuarter;
+
+        public TempoEvent(int time, int microsecondsPerQuarter) {
+            this.time = time;
+            this.microsecondsPerQuarter = microsecondsPerQuarter;
+        }
+
+        @Override
+        public String toString() {
+            return "TempoEvent{" +
+                    "time=" + time +
+                    ", microsecondsPerQuarter=" + microsecondsPerQuarter +
+                    '}';
+        }
+    }
+
+    public static class TimeSignatureEvent {
+        public int time;
+        public int numerator;
+        public int denominator;
+
+        public TimeSignatureEvent(int time, int numerator, int denominator) {
+            this.time = time;
+            this.numerator = numerator;
+            this.denominator = denominator;
+        }
+
+        @Override
+        public String toString() {
+            return "TimeSignatureEvent{" +
+                    "time=" + time +
+                    ", numerator=" + numerator +
+                    ", denominator=" + denominator +
+                    '}';
+        }
+    }
+
     public static class ChartData {
         public List<Note> notes = new ArrayList<>();
         public List<StarPowerPhrase> starPowerPhrases = new ArrayList<>();
+        public List<TempoEvent> tempoEvents = new ArrayList<>();
+        public List<TimeSignatureEvent> timeSignatures = new ArrayList<>();
+        public int resolution = 480;
     }
 
     public static ChartData parseChart(String filePath) throws IOException {
+        if (filePath.toLowerCase().endsWith(".mid")) {
+            return parseMidiChart(filePath);
+        }
+
         ChartData chartData = new ChartData();
-        int resolution = 480; // currently unused, but leaving it is fine
+        int resolution = 480;
         try (BufferedReader reader = new BufferedReader(new FileReader(filePath))) {
             String line;
             boolean inExpertSingle = false;
             boolean inSongSection = false;
+            boolean inSyncTrack = false;
 
             while ((line = reader.readLine()) != null) {
                 line = line.trim();
 
                 if (line.equals("[Song]")) {
                     inSongSection = true;
+                    inSyncTrack = false;
                 } else if (line.equals("[ExpertSingle]")) {
                     inExpertSingle = true;
+                    inSyncTrack = false;
+                } else if (line.equals("[SyncTrack]")) {
+                    inSyncTrack = true;
+                    inExpertSingle = false;
+                    inSongSection = false;
                 } else if (line.startsWith("[")) {
                     inExpertSingle = false;
                     inSongSection = false;
+                    inSyncTrack = false;
                 }
 
                 if (inSongSection && line.startsWith("Resolution")) {
@@ -89,6 +147,31 @@ public class ChartParser {
                         try {
                             resolution = Integer.parseInt(kv[1].trim());
                         } catch (NumberFormatException ignored) {}
+                    }
+                }
+
+                if (inSyncTrack) {
+                    String[] parts = line.split("=");
+                    if (parts.length == 2) {
+                        int time = Integer.parseInt(parts[0].trim());
+                        String[] syncData = parts[1].trim().split(" ");
+
+                        if (syncData.length >= 2) {
+                            if (syncData[0].equals("B")) {
+                                try {
+                                    int mpq = Integer.parseInt(syncData[1]);
+                                    chartData.tempoEvents.add(new TempoEvent(time, mpq));
+                                } catch (NumberFormatException ignored) {}
+                            } else if (syncData[0].equals("TS")) {
+                                try {
+                                    int numerator = Integer.parseInt(syncData[1]);
+                                    int denominator = syncData.length >= 3
+                                            ? Integer.parseInt(syncData[2])
+                                            : 4;
+                                    chartData.timeSignatures.add(new TimeSignatureEvent(time, numerator, denominator));
+                                } catch (NumberFormatException ignored) {}
+                            }
+                        }
                     }
                 }
 
@@ -124,7 +207,112 @@ public class ChartParser {
                 }
             }
         }
+        chartData.resolution = resolution;
+        chartData.tempoEvents.sort((a, b) -> Integer.compare(a.time, b.time));
+        chartData.timeSignatures.sort((a, b) -> Integer.compare(a.time, b.time));
+        if (chartData.timeSignatures.isEmpty()) {
+            chartData.timeSignatures.add(new TimeSignatureEvent(0, 4, 4));
+        } else if (chartData.timeSignatures.get(0).time != 0) {
+            chartData.timeSignatures.add(0, new TimeSignatureEvent(0, 4, 4));
+        }
         return chartData;
+    }
+
+    private static ChartData parseMidiChart(String filePath) throws IOException {
+        ChartData chartData = new ChartData();
+        try {
+            Sequence sequence = MidiSystem.getSequence(new File(filePath));
+            chartData.resolution = sequence.getResolution();
+
+            Track[] tracks = sequence.getTracks();
+            for (Track track : tracks) {
+                String trackName = getTrackName(track);
+                boolean isGuitarTrack = isGuitarTrackName(trackName);
+                Map<Integer, Integer> activeNotes = new HashMap<>();
+
+                for (int i = 0; i < track.size(); i++) {
+                    MidiEvent event = track.get(i);
+                    MidiMessage message = event.getMessage();
+
+                    if (message instanceof MetaMessage) {
+                        MetaMessage meta = (MetaMessage) message;
+                        int type = meta.getType();
+                        byte[] data = meta.getData();
+
+                        if (type == 0x51 && data.length == 3) {
+                            int mpq = ((data[0] & 0xFF) << 16) | ((data[1] & 0xFF) << 8) | (data[2] & 0xFF);
+                            chartData.tempoEvents.add(new TempoEvent((int) event.getTick(), mpq));
+                        } else if (type == 0x58 && data.length >= 2) {
+                            int numerator = data[0] & 0xFF;
+                            int denominator = 1 << (data[1] & 0xFF);
+                            chartData.timeSignatures.add(new TimeSignatureEvent((int) event.getTick(), numerator, denominator));
+                        }
+                    } else if (message instanceof ShortMessage && isGuitarTrack) {
+                        ShortMessage sm = (ShortMessage) message;
+                        int cmd = sm.getCommand();
+                        int note = sm.getData1();
+                        int velocity = sm.getData2();
+                        int tick = (int) event.getTick();
+
+                        boolean noteOn = cmd == ShortMessage.NOTE_ON && velocity > 0;
+                        boolean noteOff = cmd == ShortMessage.NOTE_OFF || (cmd == ShortMessage.NOTE_ON && velocity == 0);
+
+                        if (noteOn) {
+                            activeNotes.put(note, tick);
+                        } else if (noteOff && activeNotes.containsKey(note)) {
+                            int start = activeNotes.remove(note);
+                            int duration = Math.max(0, tick - start);
+
+                            if (note >= 96 && note <= 100) {
+                                int type = note - 96;
+                                chartData.notes.add(new Note(start, type, duration));
+                            } else if (note == 116) {
+                                chartData.starPowerPhrases.add(new StarPowerPhrase(start, start + duration));
+                            } else if (note == 106) {
+                                chartData.notes.add(new Note(start, 7, duration));
+                            }
+                        }
+                    }
+                }
+            }
+
+            chartData.tempoEvents.sort((a, b) -> Integer.compare(a.time, b.time));
+            chartData.timeSignatures.sort((a, b) -> Integer.compare(a.time, b.time));
+            if (chartData.timeSignatures.isEmpty()) {
+                chartData.timeSignatures.add(new TimeSignatureEvent(0, 4, 4));
+            } else if (chartData.timeSignatures.get(0).time != 0) {
+                chartData.timeSignatures.add(0, new TimeSignatureEvent(0, 4, 4));
+            }
+        } catch (InvalidMidiDataException e) {
+            throw new IOException("Invalid MIDI file: " + e.getMessage(), e);
+        }
+
+        return chartData;
+    }
+
+    private static String getTrackName(Track track) {
+        for (int i = 0; i < track.size(); i++) {
+            MidiEvent event = track.get(i);
+            MidiMessage message = event.getMessage();
+            if (message instanceof MetaMessage) {
+                MetaMessage meta = (MetaMessage) message;
+                if (meta.getType() == 0x03) {
+                    byte[] data = meta.getData();
+                    return new String(data, StandardCharsets.US_ASCII).trim();
+                }
+            }
+        }
+        return "";
+    }
+
+    private static boolean isGuitarTrackName(String name) {
+        if (name == null) {
+            return false;
+        }
+        String normalized = name.trim().toUpperCase();
+        return normalized.equals("PART GUITAR") ||
+               normalized.equals("PART GUITAR COOP") ||
+               normalized.equals("T1 GEMS");
     }
 
     public static void generateChartImage(ChartData chartData, String outputFilePath) throws IOException {
@@ -326,5 +514,25 @@ public class ChartParser {
         }
         path.closePath();
         return path;
+    }
+
+    public static void main(String[] args) {
+        if (args.length != 2) {
+            System.out.println("Usage: java ghopt.core.io.ChartParser <chart-file-path> <output-image-path>");
+            System.out.println("Example: java ghopt.core.io.ChartParser resources/Song/notes.chart output.png");
+            return;
+        }
+
+        String chartPath = args[0];
+        String outputPath = args[1];
+
+        try {
+            ChartData chartData = parseChart(chartPath);
+            generateChartImage(chartData, outputPath);
+            System.out.println("Chart image generated at: " + outputPath);
+        } catch (Exception e) {
+            System.err.println("Error: " + e.getMessage());
+            e.printStackTrace();
+        }
     }
 }
