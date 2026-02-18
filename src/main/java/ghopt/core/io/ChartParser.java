@@ -11,7 +11,6 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 
@@ -19,77 +18,11 @@ import javax.imageio.ImageIO;
 
 import java.awt.geom.GeneralPath;
 
+import ghopt.core.model.ChartData;
+import ghopt.core.model.Note;
+import ghopt.core.model.StarPowerPhrase;
+
 public class ChartParser {
-
-    public static class Note {
-        public int time;
-        public int type; // 0-4 lanes, 7=open
-        public int duration;
-        public boolean forced;
-        public boolean tap;
-        public boolean open;
-
-        public Note(int time, int type, int duration) {
-            this.time = time;
-            this.type = type;
-            this.duration = duration;
-            this.forced = false;
-            this.tap = false;
-            this.open = (type == 7);
-        }
-
-        public int endTime() {
-            return time + Math.max(0, duration);
-        }
-
-        @Override
-        public String toString() {
-            return "Note{" +
-                    "time=" + time +
-                    ", type=" + type +
-                    ", duration=" + duration +
-                    ", forced=" + forced +
-                    ", tap=" + tap +
-                    ", open=" + open +
-                    '}';
-        }
-    }
-
-    public static class StarPowerPhrase {
-        public int start;
-        public int end;
-
-        public StarPowerPhrase(int start, int end) {
-            this.start = start;
-            this.end = end;
-        }
-
-        @Override
-        public String toString() {
-            return "StarPowerPhrase{" +
-                    "start=" + start +
-                    ", end=" + end +
-                    '}';
-        }
-    }
-
-    public static class ChartData {
-        /** ticks per quarter note from [Song] Resolution */
-        public int resolution = 480;
-        public List<Note> notes = new ArrayList<>();
-        public List<StarPowerPhrase> starPowerPhrases = new ArrayList<>();
-
-        public int maxTimeTicks() {
-            int max = 0;
-            for (Note n : notes) {
-                max = Math.max(max, n.endTime());
-            }
-            for (StarPowerPhrase p : starPowerPhrases) {
-                max = Math.max(max, p.end);
-            }
-            return max;
-        }
-    }
 
     public static ChartData parseChart(String filePath) throws IOException {
         ChartData chartData = new ChartData();
@@ -116,7 +49,6 @@ public class ChartParser {
                     continue;
                 }
                 if (line.startsWith("[")) {
-                    // Any other section
                     inExpertSingle = false;
                     inSongSection = false;
                     continue;
@@ -127,7 +59,7 @@ public class ChartParser {
                     String[] kv = line.split("=");
                     if (kv.length == 2) {
                         try {
-                            chartData.resolution = Integer.parseInt(kv[1].trim());
+                            chartData.setResolution(Integer.parseInt(kv[1].trim()));
                         } catch (NumberFormatException ignored) {
                             // keep default
                         }
@@ -177,7 +109,7 @@ public class ChartParser {
                             applyMarkerToNearestEarlierGroup(chartData, time, type);
                         }
                     } else {
-                        chartData.notes.add(new Note(time, type, duration));
+                        chartData.addNote(new Note(time, type, duration));
                     }
                 } else if ("S".equals(kind)) {
                     // Star power phrase: "S 2 <duration>" (we only care about duration)
@@ -187,28 +119,30 @@ public class ChartParser {
                     } catch (NumberFormatException nfe) {
                         continue;
                     }
-                    chartData.starPowerPhrases.add(new StarPowerPhrase(time, time + duration));
+                    // Model treats phrases as [start, end) so end is start + duration
+                    chartData.addStarPowerPhrase(new StarPowerPhrase(time, time + duration));
                 }
             }
         }
 
         // Normalize ordering so later logic is predictable
-        chartData.notes.sort(Comparator.comparingInt(n -> n.time));
-        chartData.starPowerPhrases.sort(Comparator.comparingInt(p -> p.start));
+        chartData.getNotes().sort(Comparator.comparingInt(Note::getTime));
+        chartData.getStarPowerPhrases().sort(Comparator.comparingInt(StarPowerPhrase::getStartTick));
 
         return chartData;
     }
 
     private static boolean applyMarkerToNotesAtTime(ChartData chartData, int time, int markerType) {
         boolean applied = false;
-        for (int i = chartData.notes.size() - 1; i >= 0; i--) {
-            Note n = chartData.notes.get(i);
-            if (n.time < time) {
+        List<Note> notes = chartData.getNotes();
+        for (int i = notes.size() - 1; i >= 0; i--) {
+            Note n = notes.get(i);
+            if (n.getTime() < time) {
                 break;
             }
-            if (n.time == time) {
-                if (markerType == 5) n.forced = true;
-                if (markerType == 6) n.tap = true;
+            if (n.getTime() == time) {
+                if (markerType == 5) n.setForced(true);
+                if (markerType == 6) n.setTap(true);
                 applied = true;
             }
         }
@@ -217,25 +151,26 @@ public class ChartParser {
 
     private static void applyMarkerToNearestEarlierGroup(ChartData chartData, int time, int markerType) {
         // Find nearest earlier timestamp among notes, then apply to all notes at that timestamp
+        List<Note> notes = chartData.getNotes();
         int nearest = -1;
-        for (int i = chartData.notes.size() - 1; i >= 0; i--) {
-            Note n = chartData.notes.get(i);
-            if (n.time <= time) {
-                nearest = n.time;
+        for (int i = notes.size() - 1; i >= 0; i--) {
+            Note n = notes.get(i);
+            if (n.getTime() <= time) {
+                nearest = n.getTime();
                 break;
             }
         }
         if (nearest < 0) {
             return;
         }
-        for (int i = chartData.notes.size() - 1; i >= 0; i--) {
-            Note n = chartData.notes.get(i);
-            if (n.time < nearest) {
+        for (int i = notes.size() - 1; i >= 0; i--) {
+            Note n = notes.get(i);
+            if (n.getTime() < nearest) {
                 break;
             }
-            if (n.time == nearest) {
-                if (markerType == 5) n.forced = true;
-                if (markerType == 6) n.tap = true;
+            if (n.getTime() == nearest) {
+                if (markerType == 5) n.setForced(true);
+                if (markerType == 6) n.setTap(true);
             }
         }
     }
@@ -248,7 +183,7 @@ public class ChartParser {
         int laneHeight = (heightPerLayer - 2 * margin) / 5;
         int timeScale = 2;
 
-        int maxTime = chartData.maxTimeTicks();
+        int maxTime = chartData.maxTick();
         int layerSpanTicks = width * timeScale;
         int totalLayers = (maxTime / layerSpanTicks) + 1;
         int totalHeight = totalLayers * heightPerLayer;
@@ -287,17 +222,17 @@ public class ChartParser {
 
         // Star power phrases across layers
         g.setColor(new Color(173, 216, 230, 128));
-        for (StarPowerPhrase phrase : chartData.starPowerPhrases) {
-            int startLayer = phrase.start / layerSpanTicks;
-            int endLayer = phrase.end / layerSpanTicks;
+        for (StarPowerPhrase phrase : chartData.getStarPowerPhrases()) {
+            int startLayer = phrase.getStartTick() / layerSpanTicks;
+            int endLayer = phrase.getEndTick() / layerSpanTicks;
 
             for (int layer = startLayer; layer <= endLayer; layer++) {
                 int layerOffset = layer * heightPerLayer;
                 int layerStartTick = layer * layerSpanTicks;
                 int layerEndTick = layerStartTick + layerSpanTicks;
 
-                int segStartTick = Math.max(phrase.start, layerStartTick);
-                int segEndTick = Math.min(phrase.end, layerEndTick);
+                int segStartTick = Math.max(phrase.getStartTick(), layerStartTick);
+                int segEndTick = Math.min(phrase.getEndTick(), layerEndTick);
 
                 int xStart = margin + (segStartTick - layerStartTick) / timeScale;
                 int xEnd = margin + (segEndTick - layerStartTick) / timeScale;
@@ -307,30 +242,30 @@ public class ChartParser {
         }
 
         // Prep for fast in-star-power checks
-        List<StarPowerPhrase> phrases = chartData.starPowerPhrases;
+        List<StarPowerPhrase> phrases = chartData.getStarPowerPhrases();
         int spIndex = 0;
 
         Color[] noteColors = {Color.GREEN, Color.RED, Color.YELLOW, Color.BLUE, Color.ORANGE};
         Color openColor = Color.MAGENTA;
 
         // Notes (assumes chartData.notes sorted by time)
-        for (Note note : chartData.notes) {
-            int t = note.time;
+        for (Note note : chartData.getNotes()) {
+            int t = note.getTime();
 
-            while (spIndex < phrases.size() && phrases.get(spIndex).end < t) {
+            while (spIndex < phrases.size() && phrases.get(spIndex).getEndTick() <= t) {
                 spIndex++;
             }
             boolean inStarPower = false;
             if (spIndex < phrases.size()) {
                 StarPowerPhrase p = phrases.get(spIndex);
-                inStarPower = (t >= p.start && t <= p.end);
+                inStarPower = p.containsTick(t);
             }
 
-            if (note.open) {
+            if (note.isOpen()) {
                 drawOpenNote(g, note, inStarPower, openColor, noteSize, margin, laneHeight,
                         heightPerLayer, layerSpanTicks, timeScale);
             } else {
-                int lane = note.type;
+                int lane = note.getType();
                 if (lane < 0 || lane > 4) {
                     continue;
                 }
@@ -353,11 +288,11 @@ public class ChartParser {
                                     int heightPerLayer,
                                     int layerSpanTicks,
                                     int timeScale) {
-        int layer = note.time / layerSpanTicks;
+        int layer = note.getTime() / layerSpanTicks;
         int layerOffset = layer * heightPerLayer;
         int layerStartTick = layer * layerSpanTicks;
 
-        int x = margin + (note.time - layerStartTick) / timeScale;
+        int x = margin + (note.getTime() - layerStartTick) / timeScale;
 
         int barWidth = Math.max(4, noteSize / 2);
         int barX = x - barWidth / 2;
@@ -380,10 +315,10 @@ public class ChartParser {
         }
 
         // Sustain tail across layers
-        if (note.duration > 0) {
+        if (note.getDuration() > 0) {
             drawSustainAcrossLayers(g,
-                    note.time,
-                    note.time + note.duration,
+                    note.getTime(),
+                    note.getTime() + note.getDuration(),
                     barY + barHeightFull / 2 - 2,
                     4,
                     oc,
@@ -394,7 +329,7 @@ public class ChartParser {
                     x + barWidth / 2);
         }
 
-        if (note.forced) {
+        if (note.isForced()) {
             Color oldColor = g.getColor();
             Stroke oldStroke = g.getStroke();
             g.setColor(Color.BLACK);
@@ -404,7 +339,7 @@ public class ChartParser {
             g.setColor(oldColor);
         }
 
-        if (note.tap) {
+        if (note.isTap()) {
             int tickY = barY + barHeightFull / 2;
             g.setColor(Color.WHITE);
             g.fillRect(x - 2, tickY - 2, 4, 4);
@@ -422,11 +357,11 @@ public class ChartParser {
                                     int heightPerLayer,
                                     int layerSpanTicks,
                                     int timeScale) {
-        int layer = note.time / layerSpanTicks;
+        int layer = note.getTime() / layerSpanTicks;
         int layerOffset = layer * heightPerLayer;
         int layerStartTick = layer * layerSpanTicks;
 
-        int x = margin + (note.time - layerStartTick) / timeScale;
+        int x = margin + (note.getTime() - layerStartTick) / timeScale;
         int y = layerOffset + margin + lane * laneHeight + laneHeight / 2 - noteSize / 2;
 
         Color base = noteColors[lane];
@@ -455,12 +390,12 @@ public class ChartParser {
         }
 
         // Sustain across layers (thin horizontal bar)
-        if (note.duration > 0) {
+        if (note.getDuration() > 0) {
             int sustainY = y + noteSize / 2 - 2;
             int startX = x + noteSize / 2 - 2;
             drawSustainAcrossLayers(g,
-                    note.time,
-                    note.time + note.duration,
+                    note.getTime(),
+                    note.getTime() + note.getDuration(),
                     sustainY,
                     4,
                     col,
