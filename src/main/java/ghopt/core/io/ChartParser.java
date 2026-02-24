@@ -22,12 +22,13 @@ import ghopt.core.model.ChartData;
 import ghopt.core.model.Note;
 import ghopt.core.model.StarPowerPhrase;
 
-public class ChartParser {
+public class ChartParser implements ChartSource {
 
-    public static ChartData parseChart(String filePath) throws IOException {
+    @Override
+public ChartData parse(File file) throws IOException {
         ChartData chartData = new ChartData();
 
-        try (BufferedReader reader = new BufferedReader(new FileReader(filePath))) {
+        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
             String line;
             boolean inExpertSingle = false;
             boolean inSongSection = false;
