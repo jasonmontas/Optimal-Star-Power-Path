@@ -5,6 +5,8 @@ import java.awt.image.BufferedImage;
 import java.io.*;
 import java.util.List;
 import java.util.ArrayList;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.Map;
 import java.nio.charset.StandardCharsets;
@@ -107,6 +109,16 @@ public class ChartParser {
         public List<TempoEvent> tempoEvents = new ArrayList<>();
         public List<TimeSignatureEvent> timeSignatures = new ArrayList<>();
         public int resolution = 480;
+    }
+
+    private static class TimingGridLine {
+        int tick;
+        boolean barLine;
+
+        TimingGridLine(int tick, boolean barLine) {
+            this.tick = tick;
+            this.barLine = barLine;
+        }
     }
 
     public static ChartData parseChart(String filePath) throws IOException {
@@ -228,7 +240,7 @@ public class ChartParser {
             for (Track track : tracks) {
                 String trackName = getTrackName(track);
                 boolean isGuitarTrack = isGuitarTrackName(trackName);
-                Map<Integer, Integer> activeNotes = new HashMap<>();
+                Map<Integer, Deque<Integer>> activeNotes = new HashMap<>();
 
                 for (int i = 0; i < track.size(); i++) {
                     MidiEvent event = track.get(i);
@@ -258,10 +270,38 @@ public class ChartParser {
                         boolean noteOff = cmd == ShortMessage.NOTE_OFF || (cmd == ShortMessage.NOTE_ON && velocity == 0);
 
                         if (noteOn) {
-                            activeNotes.put(note, tick);
-                        } else if (noteOff && activeNotes.containsKey(note)) {
-                            int start = activeNotes.remove(note);
-                            int duration = Math.max(0, tick - start);
+                            activeNotes.computeIfAbsent(note, k -> new ArrayDeque<>()).addLast(tick);
+                        } else if (noteOff) {
+                            Deque<Integer> starts = activeNotes.get(note);
+                            if (starts != null && !starts.isEmpty()) {
+                                int start = starts.removeFirst();
+                                int duration = Math.max(0, tick - start);
+
+                                if (note >= 96 && note <= 100) {
+                                    int type = note - 96;
+                                    chartData.notes.add(new Note(start, type, duration));
+                                } else if (note == 116) {
+                                    chartData.starPowerPhrases.add(new StarPowerPhrase(start, start + duration));
+                                } else if (note == 106) {
+                                    chartData.notes.add(new Note(start, 7, duration));
+                                }
+
+                                if (starts.isEmpty()) {
+                                    activeNotes.remove(note);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (isGuitarTrack && !activeNotes.isEmpty()) {
+                    int trackEndTick = (int) sequence.getTickLength();
+                    for (Map.Entry<Integer, Deque<Integer>> entry : activeNotes.entrySet()) {
+                        int note = entry.getKey();
+                        Deque<Integer> starts = entry.getValue();
+                        while (!starts.isEmpty()) {
+                            int start = starts.removeFirst();
+                            int duration = Math.max(0, trackEndTick - start);
 
                             if (note >= 96 && note <= 100) {
                                 int type = note - 96;
@@ -332,7 +372,7 @@ public class ChartParser {
         int heightPerLayer = 600; // Reduced height per layer to make the image less tall
         int margin = 50;
         int noteSize = 20;
-        int laneHeight = (heightPerLayer - 2 * margin) / 5;
+        int laneSpacing = (heightPerLayer - 2 * margin) / 4;
         int timeScale = 2;
 
         int maxTime = chartData.notes.stream().mapToInt(note -> note.time).max().orElse(0);
@@ -350,23 +390,37 @@ public class ChartParser {
         g.setColor(Color.LIGHT_GRAY);
         for (int layer = 0; layer < totalLayers; layer++) {
             int layerOffset = layer * heightPerLayer;
-            for (int i = 0; i <= 5; i++) {
-                int y = layerOffset + margin + i * laneHeight;
+            for (int i = 0; i < 5; i++) {
+                int y = layerOffset + margin + i * laneSpacing;
                 g.drawLine(margin, y, width - margin, y);
             }
         }
 
-        g.setColor(Color.GRAY);
-        for (int layer = 0; layer < totalLayers; layer++) {
+        List<TimingGridLine> timingGridLines = getTimingGridLines(chartData, maxTime);
+        Stroke oldGridStroke = g.getStroke();
+        for (TimingGridLine line : timingGridLines) {
+            int tick = line.tick;
+            int layer = tick / (width * timeScale);
             int layerOffset = layer * heightPerLayer;
-            for (int t = 0; t < width; t += 200) {
-                int x = margin + t;
-                int yStart = layerOffset + margin;
-                int yEnd = layerOffset + heightPerLayer - margin;
-                g.drawLine(x, yStart, x, yEnd);
-                g.drawString(String.valueOf((layer * width + t) * timeScale), x, yStart - 10);
+            int x = margin + (tick % (width * timeScale)) / timeScale;
+            int yStart = layerOffset + margin;
+            int yEnd = layerOffset + heightPerLayer - margin;
+
+            if (line.barLine) {
+                g.setColor(new Color(90, 90, 90));
+                g.setStroke(new BasicStroke(3f));
+            } else {
+                g.setColor(new Color(180, 180, 180));
+                g.setStroke(new BasicStroke(1f));
+            }
+
+            g.drawLine(x, yStart, x, yEnd);
+            if (line.barLine) {
+                g.setColor(Color.DARK_GRAY);
+                g.drawString(String.valueOf(tick), x, yStart - 10);
             }
         }
+        g.setStroke(oldGridStroke);
 
         g.setColor(new Color(173, 216, 230, 128));
         for (StarPowerPhrase phrase : chartData.starPowerPhrases) {
@@ -388,7 +442,7 @@ public class ChartParser {
                 int layer = activationTime / (width * timeScale);
                 int layerOffset = layer * heightPerLayer;
                 int xPos = margin + (activationTime % (width * timeScale)) / timeScale;
-                int activationWidth = 100; // Width of activation highlight
+                int activationWidth = 25; // Width of activation highlight
                 g.fillRect(xPos - activationWidth / 2, layerOffset + margin, activationWidth, heightPerLayer - 2 * margin);
                 
                 // Draw bright green border
@@ -431,11 +485,29 @@ public class ChartParser {
                 }
 
                 if (note.duration > 0) {
-                    int sustainEndX = margin + ((note.time + note.duration) % (width * timeScale)) / timeScale;
-                    int tailY = barY + barHeightFull / 2 - 2;
-                    int tailXStart = x + barWidth / 2;
-                    int tailWidth = Math.max(1, sustainEndX - tailXStart);
-                    g.fillRect(tailXStart, tailY, tailWidth, 4);
+                    int sustainStart = note.time;
+                    int sustainEnd = note.time + note.duration;
+                    int sustainStartLayer = sustainStart / (width * timeScale);
+                    int sustainEndLayer = sustainEnd / (width * timeScale);
+
+                    for (int sustainLayer = sustainStartLayer; sustainLayer <= sustainEndLayer; sustainLayer++) {
+                        int layerTickStart = sustainLayer * width * timeScale;
+                        int layerTickEnd = (sustainLayer + 1) * width * timeScale;
+                        int segmentStartTick = Math.max(sustainStart, layerTickStart);
+                        int segmentEndTick = Math.min(sustainEnd, layerTickEnd);
+
+                        if (segmentEndTick <= segmentStartTick) {
+                            continue;
+                        }
+
+                        int segmentStartX = margin + (segmentStartTick - layerTickStart) / timeScale;
+                        int segmentEndX = margin + (segmentEndTick - layerTickStart) / timeScale;
+                        int segmentLayerOffset = sustainLayer * heightPerLayer;
+                        int tailY = segmentLayerOffset + margin + (heightPerLayer - 2 * margin) / 2 - 2;
+                        int tailWidth = Math.max(1, segmentEndX - segmentStartX);
+
+                        g.fillRect(segmentStartX, tailY, tailWidth, 4);
+                    }
                 }
 
                 if (note.forced) {
@@ -457,7 +529,7 @@ public class ChartParser {
                 int lane = note.type;
                 if (lane < 0 || lane > 4) continue;
 
-                int y = layerOffset + margin + lane * laneHeight + laneHeight / 2 - noteSize / 2;
+                int y = layerOffset + margin + lane * laneSpacing - noteSize / 2;
                 Color col = inStarPower ? noteColors[lane].brighter() : noteColors[lane];
 
                 if (inStarPower) {
@@ -483,14 +555,32 @@ public class ChartParser {
                 }
 
                 if (note.duration > 0) {
-                    int sustainEndX = margin + ((note.time + note.duration) % (width * timeScale)) / timeScale;
-                    int sustainWidth = sustainEndX - x;
-                    if (sustainWidth > 0) {
-                        Color oldColor = g.getColor();
-                        g.setColor(col);
-                        g.fillRect(x + noteSize / 2 - 2, y + noteSize / 2 - 2, sustainWidth, 4);
-                        g.setColor(oldColor);
+                    int sustainStart = note.time;
+                    int sustainEnd = note.time + note.duration;
+                    int sustainStartLayer = sustainStart / (width * timeScale);
+                    int sustainEndLayer = sustainEnd / (width * timeScale);
+
+                    Color oldColor = g.getColor();
+                    g.setColor(col);
+                    for (int sustainLayer = sustainStartLayer; sustainLayer <= sustainEndLayer; sustainLayer++) {
+                        int layerTickStart = sustainLayer * width * timeScale;
+                        int layerTickEnd = (sustainLayer + 1) * width * timeScale;
+                        int segmentStartTick = Math.max(sustainStart, layerTickStart);
+                        int segmentEndTick = Math.min(sustainEnd, layerTickEnd);
+
+                        if (segmentEndTick <= segmentStartTick) {
+                            continue;
+                        }
+
+                        int segmentStartX = margin + (segmentStartTick - layerTickStart) / timeScale;
+                        int segmentEndX = margin + (segmentEndTick - layerTickStart) / timeScale;
+                        int segmentLayerOffset = sustainLayer * heightPerLayer;
+                        int segmentY = segmentLayerOffset + margin + lane * laneSpacing - 2;
+                        int segmentWidth = Math.max(1, segmentEndX - segmentStartX);
+
+                        g.fillRect(segmentStartX, segmentY, segmentWidth, 4);
                     }
+                    g.setColor(oldColor);
                 }
             }
         }
@@ -516,15 +606,78 @@ public class ChartParser {
         return path;
     }
 
+    private static List<TimingGridLine> getTimingGridLines(ChartData chartData, int maxTick) {
+        List<TimingGridLine> lines = new ArrayList<>();
+        if (maxTick < 0) {
+            return lines;
+        }
+
+        List<TimeSignatureEvent> timeSignatures = chartData.timeSignatures;
+        if (timeSignatures == null || timeSignatures.isEmpty()) {
+            timeSignatures = new ArrayList<>();
+            timeSignatures.add(new TimeSignatureEvent(0, 4, 4));
+        }
+
+        for (int i = 0; i < timeSignatures.size(); i++) {
+            TimeSignatureEvent ts = timeSignatures.get(i);
+            int segmentStart = Math.max(0, ts.time);
+            int segmentEnd = (i + 1 < timeSignatures.size())
+                    ? timeSignatures.get(i + 1).time
+                    : maxTick + 1;
+
+            int denominator = ts.denominator <= 0 ? 4 : ts.denominator;
+            int numerator = ts.numerator <= 0 ? 4 : ts.numerator;
+            int ticksPerBeat = Math.max(1, (chartData.resolution * 4) / denominator);
+            int ticksPerBar = Math.max(1, ticksPerBeat * numerator);
+
+            for (int barTick = segmentStart; barTick < segmentEnd && barTick <= maxTick; barTick += ticksPerBar) {
+                if (lines.isEmpty() || lines.get(lines.size() - 1).tick != barTick) {
+                    lines.add(new TimingGridLine(barTick, true));
+                }
+
+                for (int beat = 1; beat < numerator; beat++) {
+                    int beatTick = barTick + beat * ticksPerBeat;
+                    if (beatTick >= segmentEnd || beatTick > maxTick) {
+                        break;
+                    }
+                    lines.add(new TimingGridLine(beatTick, false));
+                }
+            }
+        }
+
+        if (lines.isEmpty() || lines.get(0).tick != 0) {
+            lines.add(0, new TimingGridLine(0, true));
+        }
+
+        lines.sort((a, b) -> {
+            if (a.tick != b.tick) {
+                return Integer.compare(a.tick, b.tick);
+            }
+            if (a.barLine == b.barLine) {
+                return 0;
+            }
+            return a.barLine ? -1 : 1;
+        });
+
+        List<TimingGridLine> deduped = new ArrayList<>();
+        for (TimingGridLine line : lines) {
+            if (deduped.isEmpty() || deduped.get(deduped.size() - 1).tick != line.tick) {
+                deduped.add(line);
+            }
+        }
+
+        return deduped;
+    }
+
     public static void main(String[] args) {
         if (args.length != 2) {
             System.out.println("Usage: java ghopt.core.io.ChartParser <chart-file-path> <output-image-path>");
-            System.out.println("Example: java ghopt.core.io.ChartParser resources/Song/notes.chart output.png");
+            System.out.println("Example: java ghopt.core.io.ChartParser resources/Song/notes.chart/mid output.png");
             return;
         }
 
         String chartPath = args[0];
-        String outputPath = args[1];
+        String outputPath = "src/output/" + args[1];
 
         try {
             ChartData chartData = parseChart(chartPath);

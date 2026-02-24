@@ -83,10 +83,6 @@ public class StarPowerOptimizer {
     private static final int DRAIN_PER_BAR = 25; // 12.5% in a 0-200 meter
 
     public static OptimalPath findOptimalPath(ChartParser.ChartData chartData) {
-        return findOptimalPath(chartData, false);
-    }
-
-    public static OptimalPath findOptimalPath(ChartParser.ChartData chartData, boolean debug) {
         if (chartData.notes.isEmpty()) {
             return new OptimalPath(new ArrayList<>(), 0);
         }
@@ -103,10 +99,6 @@ public class StarPowerOptimizer {
         Map<State, DPResult> memo = new HashMap<>();
         State initial = new State(0, 0, false);
         DPResult result = dpSolve(groups, initial, memo);
-
-        if (debug) {
-            printDebugTrace(groups, result.activations);
-        }
 
         return new OptimalPath(result.activations, result.score);
     }
@@ -128,54 +120,6 @@ public class StarPowerOptimizer {
         }
         
         return totalScore;
-    }
-
-    private static void printDebugTrace(List<GroupInfo> groups, List<Integer> activations) {
-        Set<Integer> activationSet = new HashSet<>(activations);
-        int meter = 0;
-        boolean active = false;
-        long score = 0;
-        
-        System.out.println("\n=== Debug Trace ===");
-        int activationCount = 0;
-        for (int i = 0; i < groups.size(); i++) {
-            GroupInfo g = groups.get(i);
-            
-            // Gain phrase
-            if (g.phraseComplete) {
-                meter = Math.min(MAX_METER, meter + PHRASE_GAIN);
-                System.out.println("PHRASE at time " + g.time + " | Meter now: " + meter + " (" + (meter/2.0) + "%)");
-            }
-            
-            // Check for activation
-            if (activationSet.contains(g.time)) {
-                activationCount++;
-                active = true;
-                System.out.println(">>> ACTIVATE #" + activationCount + " at time " + g.time + " | Meter: " + meter + " (" + (meter/2.0) + "%) | Combo: " + g.baseMultiplier + "x -> " + (g.baseMultiplier * 2) + "x");
-            }
-            
-            // Score this group
-            long groupBase = (long) NOTE_POINTS * g.noteCount + g.sustainPoints;
-            int mult = g.baseMultiplier * (active ? 2 : 1);
-            long groupScore = groupBase * mult;
-            score += groupScore;
-            
-            // Drain
-            if (active) {
-                int oldMeter = meter;
-                int drainUnits = (g.ticksPerBar > 0 && g.deltaTicks > 0) 
-                    ? (DRAIN_PER_BAR * g.deltaTicks) / g.ticksPerBar 
-                    : 0;
-                meter = Math.max(0, meter - drainUnits);
-                
-                if (meter == 0 && oldMeter > 0) {
-                    active = false;
-                    System.out.println("<<< SP ENDED after group " + i + " at time " + g.time + " | Drained from " + oldMeter + " to 0");
-                }
-            }
-        }
-        System.out.println("Final Score: " + score);
-        System.out.println("===================\n");
     }
 
     private static DPResult dpSolve(List<GroupInfo> groups, State state, Map<State, DPResult> memo) {
@@ -361,16 +305,16 @@ public class StarPowerOptimizer {
 
     public static void main(String[] args) throws java.io.IOException {
         if (args.length < 1) {
-            System.out.println("Usage: java ghopt.core.io.StarPowerOptimizer <chart-file> [output-image-path]");
+            System.out.println("Usage: java -cp out ghopt.core.io.StarPowerOptimizer <chart-file> [output-image-path]");
             return;
         }
 
         String chartPath = args[0];
-        String outputPath = args.length > 1 ? args[1] : "output/chart_with_activations.png";
+        String outputPath = "src/output/" + args[1];
 
         ChartParser.ChartData chartData = ChartParser.parseChart(chartPath);
         long baseScore = calculateBaseScore(chartData);
-        OptimalPath optimalPath = findOptimalPath(chartData, true);
+        OptimalPath optimalPath = findOptimalPath(chartData);
 
         System.out.println("=== Star Power Optimizer Results ===");
         System.out.println("Base Score (no star power): " + baseScore);

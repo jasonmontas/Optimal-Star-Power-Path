@@ -8,8 +8,14 @@
 
 # Week starting 2/10
 
-TO DO:
-- Fix up ChartParser.java
-    *   Add .mid file support, and parse data into an understandable format
-- Implement DP algorithm using data
+- Fixed up ChartParser.java
+    *   Added .mid file support, with bugs
+- Implemented DP algorithm using data
 - Create a working bare bones system
+
+# Week starting 2/17
+
+- Fixed up some bugs involving .mid files
+- Made output of chart easier to read
+    * Synced up notes and bar lines
+    * Made green activation highlight bar more precise
