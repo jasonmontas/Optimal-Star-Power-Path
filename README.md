@@ -61,7 +61,9 @@ and output.
 
 Now: CLI  tool that takes notes.chart file summarizes and outputs a PNG image that represents when the notes come up.
 
-Later: Convert chart into an internal chart model with notes phrases and star power data then right a basic optimizer (More of a skeleton).
+Week of Feb 15th: Convert chart into an internal chart model with notes phrases and star power data then right a basic optimizer (More of a skeleton).
+
+Week of the 22nd: Introduce ChartSource abstraction and implement MidiParser for basic .mid support. Refactor Main to auto-detect input format (.chart or .mid) and parse accordingly.
 
 Later 2: Implement actual game rules into code to make an optimizer that outputs a star power activation plan.
 
