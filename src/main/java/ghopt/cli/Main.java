@@ -2,6 +2,7 @@ package ghopt.cli;
 
 import ghopt.core.io.*;
 import ghopt.core.model.ChartData;
+import ghopt.core.render.ChartRenderer;
 import java.io.File;
 
 public class Main {
@@ -27,7 +28,7 @@ public class Main {
 
         try {
             ChartData data = source.parse(input);
-            ChartParser.generateChartImage(data, outputPath);
+            ChartRenderer.render(data, outputPath);
             System.out.println("Chart image generated at: " + outputPath);
         } catch (Exception e) {
             e.printStackTrace();

@@ -1,22 +1,15 @@
 package ghopt.core.io;
 
-import java.awt.BasicStroke;
-import java.awt.Color;
-import java.awt.Graphics2D;
-import java.awt.RenderingHints;
-import java.awt.Shape;
-import java.awt.Stroke;
-import java.awt.image.BufferedImage;
+
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
 import java.io.IOException;
-import java.util.Comparator;
+
 import java.util.List;
 
-import javax.imageio.ImageIO;
 
-import java.awt.geom.GeneralPath;
+
 
 import ghopt.core.model.ChartData;
 import ghopt.core.model.Note;
@@ -25,7 +18,7 @@ import ghopt.core.model.StarPowerPhrase;
 public class ChartParser implements ChartSource {
 
     @Override
-public ChartData parse(File file) throws IOException {
+    public ChartData parse(File file) throws IOException {
         ChartData chartData = new ChartData();
 
         try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
@@ -127,8 +120,7 @@ public ChartData parse(File file) throws IOException {
         }
 
         // Normalize ordering so later logic is predictable
-        chartData.getNotes().sort(Comparator.comparingInt(Note::getTime));
-        chartData.getStarPowerPhrases().sort(Comparator.comparingInt(StarPowerPhrase::getStartTick));
+        chartData.sortByTime();
 
         return chartData;
     }
@@ -176,298 +168,7 @@ public ChartData parse(File file) throws IOException {
         }
     }
 
-    public static void generateChartImage(ChartData chartData, String outputFilePath) throws IOException {
-        int width = 4000;
-        int heightPerLayer = 600;
-        int margin = 50;
-        int noteSize = 20;
-        int laneHeight = (heightPerLayer - 2 * margin) / 5;
-        int timeScale = 2;
+    
 
-        int maxTime = chartData.maxTick();
-        int layerSpanTicks = width * timeScale;
-        int totalLayers = (maxTime / layerSpanTicks) + 1;
-        int totalHeight = totalLayers * heightPerLayer;
-
-        BufferedImage image = new BufferedImage(width, totalHeight, BufferedImage.TYPE_INT_ARGB);
-        Graphics2D g = image.createGraphics();
-
-        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-
-        // Background
-        g.setColor(Color.WHITE);
-        g.fillRect(0, 0, width, totalHeight);
-
-        // Lanes
-        g.setColor(Color.LIGHT_GRAY);
-        for (int layer = 0; layer < totalLayers; layer++) {
-            int layerOffset = layer * heightPerLayer;
-            for (int i = 0; i <= 5; i++) {
-                int y = layerOffset + margin + i * laneHeight;
-                g.drawLine(margin, y, width - margin, y);
-            }
-        }
-
-        // Time markers
-        g.setColor(Color.GRAY);
-        for (int layer = 0; layer < totalLayers; layer++) {
-            int layerOffset = layer * heightPerLayer;
-            for (int t = 0; t < width; t += 200) {
-                int x = margin + t;
-                int yStart = layerOffset + margin;
-                int yEnd = layerOffset + heightPerLayer - margin;
-                g.drawLine(x, yStart, x, yEnd);
-                g.drawString(String.valueOf((layer * width + t) * timeScale), x, yStart - 10);
-            }
-        }
-
-        // Star power phrases across layers
-        g.setColor(new Color(173, 216, 230, 128));
-        for (StarPowerPhrase phrase : chartData.getStarPowerPhrases()) {
-            int startLayer = phrase.getStartTick() / layerSpanTicks;
-            int endLayer = phrase.getEndTick() / layerSpanTicks;
-
-            for (int layer = startLayer; layer <= endLayer; layer++) {
-                int layerOffset = layer * heightPerLayer;
-                int layerStartTick = layer * layerSpanTicks;
-                int layerEndTick = layerStartTick + layerSpanTicks;
-
-                int segStartTick = Math.max(phrase.getStartTick(), layerStartTick);
-                int segEndTick = Math.min(phrase.getEndTick(), layerEndTick);
-
-                int xStart = margin + (segStartTick - layerStartTick) / timeScale;
-                int xEnd = margin + (segEndTick - layerStartTick) / timeScale;
-
-                g.fillRect(xStart, layerOffset + margin, xEnd - xStart, heightPerLayer - 2 * margin);
-            }
-        }
-
-        // Prep for fast in-star-power checks
-        List<StarPowerPhrase> phrases = chartData.getStarPowerPhrases();
-        int spIndex = 0;
-
-        Color[] noteColors = {Color.GREEN, Color.RED, Color.YELLOW, Color.BLUE, Color.ORANGE};
-        Color openColor = Color.MAGENTA;
-
-        // Notes (assumes chartData.notes sorted by time)
-        for (Note note : chartData.getNotes()) {
-            int t = note.getTime();
-
-            while (spIndex < phrases.size() && phrases.get(spIndex).getEndTick() <= t) {
-                spIndex++;
-            }
-            boolean inStarPower = false;
-            if (spIndex < phrases.size()) {
-                StarPowerPhrase p = phrases.get(spIndex);
-                inStarPower = p.containsTick(t);
-            }
-
-            if (note.isOpen()) {
-                drawOpenNote(g, note, inStarPower, openColor, noteSize, margin, laneHeight,
-                        heightPerLayer, layerSpanTicks, timeScale);
-            } else {
-                int lane = note.getType();
-                if (lane < 0 || lane > 4) {
-                    continue;
-                }
-                drawLaneNote(g, note, lane, inStarPower, noteColors, noteSize, margin, laneHeight,
-                        heightPerLayer, layerSpanTicks, timeScale);
-            }
-        }
-
-        g.dispose();
-        ImageIO.write(image, "png", new File(outputFilePath));
-    }
-
-    private static void drawOpenNote(Graphics2D g,
-                                    Note note,
-                                    boolean inStarPower,
-                                    Color openColor,
-                                    int noteSize,
-                                    int margin,
-                                    int laneHeight,
-                                    int heightPerLayer,
-                                    int layerSpanTicks,
-                                    int timeScale) {
-        int layer = note.getTime() / layerSpanTicks;
-        int layerOffset = layer * heightPerLayer;
-        int layerStartTick = layer * layerSpanTicks;
-
-        int x = margin + (note.getTime() - layerStartTick) / timeScale;
-
-        int barWidth = Math.max(4, noteSize / 2);
-        int barX = x - barWidth / 2;
-        int barY = layerOffset + margin;
-        int barHeightFull = heightPerLayer - 2 * margin;
-
-        Color oc = inStarPower ? openColor.brighter() : openColor;
-        g.setColor(oc);
-        g.fillRect(barX, barY, barWidth, barHeightFull);
-
-        if (inStarPower) {
-            Color borderColor = new Color(0, 0, 139);
-            Stroke oldStroke = g.getStroke();
-            Color oldColor = g.getColor();
-            g.setColor(borderColor);
-            g.setStroke(new BasicStroke(2));
-            g.drawRect(barX, barY, barWidth, barHeightFull);
-            g.setStroke(oldStroke);
-            g.setColor(oldColor);
-        }
-
-        // Sustain tail across layers
-        if (note.getDuration() > 0) {
-            drawSustainAcrossLayers(g,
-                    note.getTime(),
-                    note.getTime() + note.getDuration(),
-                    barY + barHeightFull / 2 - 2,
-                    4,
-                    oc,
-                    margin,
-                    heightPerLayer,
-                    layerSpanTicks,
-                    timeScale,
-                    x + barWidth / 2);
-        }
-
-        if (note.isForced()) {
-            Color oldColor = g.getColor();
-            Stroke oldStroke = g.getStroke();
-            g.setColor(Color.BLACK);
-            g.setStroke(new BasicStroke(2));
-            g.drawRect(barX, barY, barWidth, barHeightFull);
-            g.setStroke(oldStroke);
-            g.setColor(oldColor);
-        }
-
-        if (note.isTap()) {
-            int tickY = barY + barHeightFull / 2;
-            g.setColor(Color.WHITE);
-            g.fillRect(x - 2, tickY - 2, 4, 4);
-        }
-    }
-
-    private static void drawLaneNote(Graphics2D g,
-                                    Note note,
-                                    int lane,
-                                    boolean inStarPower,
-                                    Color[] noteColors,
-                                    int noteSize,
-                                    int margin,
-                                    int laneHeight,
-                                    int heightPerLayer,
-                                    int layerSpanTicks,
-                                    int timeScale) {
-        int layer = note.getTime() / layerSpanTicks;
-        int layerOffset = layer * heightPerLayer;
-        int layerStartTick = layer * layerSpanTicks;
-
-        int x = margin + (note.getTime() - layerStartTick) / timeScale;
-        int y = layerOffset + margin + lane * laneHeight + laneHeight / 2 - noteSize / 2;
-
-        Color base = noteColors[lane];
-        Color col = inStarPower ? base.brighter() : base;
-
-        if (inStarPower) {
-            int cx = x + noteSize / 2;
-            int cy = y + noteSize / 2;
-            int outer = Math.max(8, noteSize * 3 / 4);
-            int inner = Math.max(4, noteSize / 3);
-            Shape star = createStar(cx, cy, outer, inner, 5);
-            g.setColor(col);
-            g.fill(star);
-
-            Color outline = col.darker();
-            Stroke oldStroke = g.getStroke();
-            Color oldColor = g.getColor();
-            g.setColor(outline);
-            g.setStroke(new BasicStroke(2));
-            g.draw(star);
-            g.setStroke(oldStroke);
-            g.setColor(oldColor);
-        } else {
-            g.setColor(col);
-            g.fillOval(x, y, noteSize, noteSize);
-        }
-
-        // Sustain across layers (thin horizontal bar)
-        if (note.getDuration() > 0) {
-            int sustainY = y + noteSize / 2 - 2;
-            int startX = x + noteSize / 2 - 2;
-            drawSustainAcrossLayers(g,
-                    note.getTime(),
-                    note.getTime() + note.getDuration(),
-                    sustainY,
-                    4,
-                    col,
-                    margin,
-                    heightPerLayer,
-                    layerSpanTicks,
-                    timeScale,
-                    startX);
-        }
-    }
-
-    private static void drawSustainAcrossLayers(Graphics2D g,
-                                               int startTick,
-                                               int endTick,
-                                               int localY,
-                                               int h,
-                                               Color color,
-                                               int margin,
-                                               int heightPerLayer,
-                                               int layerSpanTicks,
-                                               int timeScale,
-                                               int startXOverride) {
-        if (endTick <= startTick) {
-            return;
-        }
-
-        int startLayer = startTick / layerSpanTicks;
-        int endLayer = endTick / layerSpanTicks;
-
-        g.setColor(color);
-
-        for (int layer = startLayer; layer <= endLayer; layer++) {
-            int layerStartTick = layer * layerSpanTicks;
-            int layerEndTick = layerStartTick + layerSpanTicks;
-            int layerOffset = layer * heightPerLayer;
-
-            int segStartTick = Math.max(startTick, layerStartTick);
-            int segEndTick = Math.min(endTick, layerEndTick);
-
-            int xStart;
-            if (layer == startLayer) {
-                xStart = startXOverride;
-            } else {
-                xStart = margin; // start of drawable region for wrapped layer
-            }
-
-            int xEnd = margin + (segEndTick - layerStartTick) / timeScale;
-            int w = xEnd - xStart;
-            if (w > 0) {
-                g.fillRect(xStart, layerOffset + localY, w, h);
-            }
-        }
-    }
-
-    private static Shape createStar(int cx, int cy, int outerRadius, int innerRadius, int points) {
-        GeneralPath path = new GeneralPath();
-        double angle = -Math.PI / 2;
-        double step = Math.PI / points;
-
-        for (int i = 0; i < points * 2; i++) {
-            double r = (i % 2 == 0) ? outerRadius : innerRadius;
-            double px = cx + Math.cos(angle) * r;
-            double py = cy + Math.sin(angle) * r;
-            if (i == 0) {
-                path.moveTo(px, py);
-            } else {
-                path.lineTo(px, py);
-            }
-            angle += step;
-        }
-        path.closePath();
-        return path;
-    }
+    
 }

@@ -1,52 +1,125 @@
 package ghopt.core.io;
 
-import ghopt.core.model.ChartData;
-import java.io.File;
+import ghopt.core.model.*;
+
 import javax.sound.midi.*;
+import java.io.File;
+import java.io.IOException;
+import java.util.*;
 
 public class MidiParser implements ChartSource {
 
     @Override
-    public ChartData parse(File file) throws Exception {
-        ChartData data = new ChartData();
+    public ChartData parse(File file) throws IOException {
 
-        Sequence sequence = MidiSystem.getSequence(file);
-        data.setResolution(sequence.getResolution());
-        for (Track track : sequence.getTracks()) {
-            for (int i = 0; i < track.size(); i++) {
-                MidiEvent event = track.get(i);
-                MidiMessage message = event.getMessage();
+        ChartData chartData = new ChartData();
 
-                if (message instanceof ShortMessage sm) {
-                    if (sm.getCommand() == ShortMessage.NOTE_ON && sm.getData2() > 0) {
-                        int midiNote = sm.getData1();
-                        long tick = event.getTick();
+        try {
 
-                        int lane = midiNoteToLane(midiNote);
-                        if (lane >= 0) {
-                            data.addNote(new ghopt.core.model.Note(
-                                    (int) tick,
-                                    lane,
-                                    0
-                            ));
+            Sequence sequence = MidiSystem.getSequence(file);
+            chartData.setResolution(sequence.getResolution());
+
+            Track[] tracks = sequence.getTracks();
+
+            for (Track track : tracks) {
+
+                String trackName = getTrackName(track);
+                if (!isGuitarTrack(trackName)) continue;
+
+                Map<Integer, Deque<Integer>> activeNotes = new HashMap<>();
+
+                for (int i = 0; i < track.size(); i++) {
+
+                    MidiEvent event = track.get(i);
+                    MidiMessage message = event.getMessage();
+
+                    if (message instanceof ShortMessage sm) {
+
+                        int cmd = sm.getCommand();
+                        int note = sm.getData1();
+                        int velocity = sm.getData2();
+                        int tick = (int) event.getTick();
+
+                        boolean noteOn = cmd == ShortMessage.NOTE_ON && velocity > 0;
+                        boolean noteOff = cmd == ShortMessage.NOTE_OFF ||
+                                (cmd == ShortMessage.NOTE_ON && velocity == 0);
+
+                        if (noteOn) {
+
+                            activeNotes
+                                .computeIfAbsent(note, k -> new ArrayDeque<>())
+                                .addLast(tick);
+
+                        } else if (noteOff) {
+
+                            Deque<Integer> starts = activeNotes.get(note);
+
+                            if (starts != null && !starts.isEmpty()) {
+
+                                int start = starts.removeFirst();
+                                int duration = Math.max(0, tick - start);
+
+                                parseMidiNote(chartData, note, start, duration);
+
+                                if (starts.isEmpty())
+                                    activeNotes.remove(note);
+                            }
                         }
                     }
                 }
             }
+
+        } catch (Exception e) {
+            throw new IOException("Failed to parse MIDI", e);
         }
 
-        data.sortByTime();
-        return data;
+        chartData.sortByTime();
+        return chartData;
     }
 
-    private int midiNoteToLane(int midiNote) {
-        return switch (midiNote) {
-            case 60 -> 0;
-            case 61 -> 1;
-            case 62 -> 2;
-            case 63 -> 3;
-            case 64 -> 4;
-            default -> -1;
-        };
+    private void parseMidiNote(ChartData chartData, int midiNote, int start, int duration) {
+
+        if (midiNote >= 96 && midiNote <= 100) {
+
+            int lane = midiNote - 96;
+            chartData.addNote(new Note(start, lane, duration));
+
+        } else if (midiNote == 116) {
+
+            chartData.addStarPowerPhrase(
+                    new StarPowerPhrase(start, start + duration));
+
+        } else if (midiNote == 106) {
+
+            chartData.addNote(new Note(start, 7, duration));
+        }
+    }
+
+    private boolean isGuitarTrack(String name) {
+
+        if (name == null) return false;
+
+        String n = name.trim().toUpperCase();
+
+        return n.equals("PART GUITAR")
+            || n.equals("PART GUITAR COOP")
+            || n.equals("T1 GEMS");
+    }
+
+    private String getTrackName(Track track) {
+
+        for (int i = 0; i < track.size(); i++) {
+
+            MidiEvent event = track.get(i);
+            MidiMessage message = event.getMessage();
+
+            if (message instanceof MetaMessage meta) {
+
+                if (meta.getType() == 0x03)
+                    return new String(meta.getData()).trim();
+            }
+        }
+
+        return "";
     }
 }
