@@ -16,21 +16,22 @@ public class Main {
         File input = new File(args[0]);
         String outputPath = args[1];
 
-        ChartSource source;
-
-        if (input.getName().endsWith(".chart")) {
-            source = new ChartParser();
-        } else if (input.getName().endsWith(".mid")) {
-            source = new MidiParser();
-        } else {
-            throw new IllegalArgumentException("Unsupported file type.");
+        // Check if input file exists
+        if (!input.exists()) {
+            System.out.println("Input file not found: " + input.getPath());
+            return;
         }
-
+        
         try {
+            ChartSource source = ChooseChartSource.choose(input);
             ChartData data = source.parse(input);
+            System.out.println("Notes: " + data.getNotes().size());
+            System.out.println("Star Power: " + data.getStarPowerPhrases().size());
             ChartRenderer.render(data, outputPath);
             System.out.println("Chart image generated at: " + outputPath);
+        
         } catch (Exception e) {
+            System.out.println("Error: " + e.getMessage());
             e.printStackTrace();
         }
     }
