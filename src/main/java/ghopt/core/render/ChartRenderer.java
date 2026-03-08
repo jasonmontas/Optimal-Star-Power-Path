@@ -14,6 +14,10 @@ import javax.imageio.ImageIO;
 public class ChartRenderer {
 
     public static void render(ChartData chartData, String outputFilePath) throws IOException {
+        render(chartData, java.util.Collections.emptyList(), outputFilePath);
+    }
+
+    public static void render(ChartData chartData, java.util.List<Integer> activationTimes, String outputFilePath) throws IOException {
 
         int width = 4000;
         int heightPerLayer = 600;
@@ -99,6 +103,20 @@ public class ChartRenderer {
                 g.setColor(noteColors[lane]);
                 g.fillOval(x, y, noteSize, noteSize);
             }
+        }
+
+        // Draw activation markers as vertical yellow lines with a label
+        g.setColor(new Color(255, 215, 0)); // gold
+        g.setStroke(new BasicStroke(3));
+        java.util.Set<Integer> activationSet = new java.util.HashSet<>(activationTimes);
+        for (int tick : activationSet) {
+            int layer = tick / layerSpanTicks;
+            int layerOffset = layer * heightPerLayer;
+            int layerStartTick = layer * layerSpanTicks;
+            int x = margin + (tick - layerStartTick) / timeScale;
+            g.drawLine(x, layerOffset + margin - 10, x, layerOffset + heightPerLayer - margin + 10);
+            g.setFont(new Font("SansSerif", Font.BOLD, 14));
+            g.drawString("SP", x + 4, layerOffset + margin - 2);
         }
 
         g.dispose();

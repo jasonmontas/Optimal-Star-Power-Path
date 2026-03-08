@@ -7,7 +7,7 @@ import java.io.File;
 
 public class Main {
     public static void main(String[] args) {
-
+        // Basic argument check
         if (args.length != 2) {
             System.out.println("Usage: java ghopt.cli.Main <input-file> <output-image>");
             return;
@@ -27,9 +27,15 @@ public class Main {
             ChartData data = source.parse(input);
             System.out.println("Notes: " + data.getNotes().size());
             System.out.println("Star Power: " + data.getStarPowerPhrases().size());
+            //Run optimizer
             StarPowerOptimizer.OptimalPath path =
             StarPowerOptimizer.findOptimalPath(data);
-            ChartRenderer.render(data, outputPath);
+            // Sort activation times for better readability
+            java.util.Collections.sort(path.activationTimes);
+            System.out.println("Optimal score: " + path.totalScore);
+            System.out.println("Activation ticks: " + path.activationTimes);
+            // Render chart with activations highlighted
+            ChartRenderer.render(data, path.activationTimes, outputPath);
             System.out.println("Chart image generated at: " + outputPath);
         
         } catch (Exception e) {
