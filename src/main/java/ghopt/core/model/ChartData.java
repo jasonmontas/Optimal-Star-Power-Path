@@ -7,17 +7,18 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * In-memory representation of a parsed chart (notes + star power phrases).
- *
+ * In-memory representation of a parsed chart (notes + star power phrases + tempo map).
  * All times are in chart ticks (based on resolution = ticks per quarter note).
  */
 public final class ChartData {
 
-    /** Ticks per quarter note from the chart's [Song] section (Resolution). */
     private int resolution = 480;
+    // Song offset in seconds from the [Song] section (can be negative)
+    private double offset = 0.0;
 
     private final List<Note> notes = new ArrayList<>();
     private final List<StarPowerPhrase> starPowerPhrases = new ArrayList<>();
+    private final List<TempoEvent> tempoEvents = new ArrayList<>();
 
     public ChartData() {}
 
@@ -25,26 +26,19 @@ public final class ChartData {
         setResolution(resolution);
     }
 
-    public int getResolution() {
-        return resolution;
-    }
+    public int getResolution() { return resolution; }
 
     public void setResolution(int resolution) {
-        if (resolution <= 0) {
-            throw new IllegalArgumentException("resolution must be > 0");
-        }
+        if (resolution <= 0) throw new IllegalArgumentException("resolution must be > 0");
         this.resolution = resolution;
     }
 
-    /** Mutable list of notes (tick domain). */
-    public List<Note> getNotes() {
-        return notes;
-    }
+    public double getOffset() { return offset; }
+    public void setOffset(double offset) { this.offset = offset; }
 
-    /** Mutable list of star power phrases (tick domain). */
-    public List<StarPowerPhrase> getStarPowerPhrases() {
-        return starPowerPhrases;
-    }
+    public List<Note> getNotes() { return notes; }
+    public List<StarPowerPhrase> getStarPowerPhrases() { return starPowerPhrases; }
+    public List<TempoEvent> getTempoEvents() { return tempoEvents; }
 
     public void addNote(Note note) {
         notes.add(Objects.requireNonNull(note, "note"));
@@ -54,41 +48,32 @@ public final class ChartData {
         starPowerPhrases.add(Objects.requireNonNull(phrase, "phrase"));
     }
 
-    /** Sort notes + phrases by start tick (call after parsing). */
+    public void addTempoEvent(TempoEvent event) {
+        tempoEvents.add(Objects.requireNonNull(event, "event"));
+    }
+
     public void sortByTime() {
         notes.sort(Comparator.comparingInt(Note::getTime));
         starPowerPhrases.sort(Comparator.comparingInt(StarPowerPhrase::getStartTick));
+        tempoEvents.sort(Comparator.comparingInt(TempoEvent::getTick));
     }
 
-    /** @return max tick reached by any note end or phrase end. */
     public int maxTick() {
         int max = 0;
-
-        for (Note n : notes) {
-            max = Math.max(max, n.endTime());
-        }
-        for (StarPowerPhrase p : starPowerPhrases) {
-            max = Math.max(max, p.getEndTick());
-        }
-
+        for (Note n : notes) max = Math.max(max, n.endTime());
+        for (StarPowerPhrase p : starPowerPhrases) max = Math.max(max, p.getEndTick());
         return max;
     }
 
-    /** Immutable views (nice for algorithms later). */
-    public List<Note> notesView() {
-        return Collections.unmodifiableList(notes);
-    }
-
-    public List<StarPowerPhrase> starPowerPhrasesView() {
-        return Collections.unmodifiableList(starPowerPhrases);
-    }
+    public List<Note> notesView() { return Collections.unmodifiableList(notes); }
+    public List<StarPowerPhrase> starPowerPhrasesView() { return Collections.unmodifiableList(starPowerPhrases); }
+    public List<TempoEvent> tempoEventsView() { return Collections.unmodifiableList(tempoEvents); }
 
     @Override
     public String toString() {
-        return "ChartData{" +
-                "resolution=" + resolution +
+        return "ChartData{resolution=" + resolution +
                 ", notes=" + notes.size() +
                 ", starPowerPhrases=" + starPowerPhrases.size() +
-                '}';
+                ", tempoEvents=" + tempoEvents.size() + '}';
     }
 }
