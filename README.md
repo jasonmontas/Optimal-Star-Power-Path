@@ -64,3 +64,9 @@ Tweak algorithm to be more accurate and include star power gained from sustains
 Make a GUI for project
 
 Add a feature that notifies player when to activate star power in real time
+
+# Diagram
+
+![System Diagram](diagram.png)
+
+
