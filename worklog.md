@@ -21,7 +21,7 @@
 - Implemented MidiParser for basic .mid support (JM)
 - Refactored Main to auto-detect input format (.chart or .mid) and parse accordingly (JM)
 
-# Week starting 3/31
+# Month of March
 - Fixed combo counter in StarPowerOptimizer to increment by number of notes in a chord instead of always by 1, matching Clone Hero scoring rules (SH)
 - Fixed sustain scoring to not multiply sustain points per chord note, since Clone Hero awards 25 pts per beat regardless of chord size (SH)
 - Fixed activation time ordering in the DP solver to keep results in chronological order (SH)
