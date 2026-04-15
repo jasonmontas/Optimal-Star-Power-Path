@@ -91,7 +91,7 @@ public class ChartParser implements ChartSource {
                     if (tokens.length >= 2 && "B".equals(tokens[0])) {
                         try {
                             long microsecondsPerBeat = Long.parseLong(tokens[1]);
-                            double bpm = 60_000_000.0 / microsecondsPerBeat;
+                            double bpm = microsecondsPerBeat / 1000.0;
                             chartData.addTempoEvent(new TempoEvent(tick, bpm));
                         } catch (NumberFormatException ignored) {}
                     }
