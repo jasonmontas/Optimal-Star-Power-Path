@@ -26,6 +26,23 @@ public class MidiParser implements ChartSource {
             for (Track track : tracks) {
 
                 String trackName = getTrackName(track);
+
+                // Read tempo events from any track (usually track 0 / the tempo track).
+                // MIDI stores tempo as microseconds per beat in MetaMessage type 0x51.
+                for (int i = 0; i < track.size(); i++) {
+                    MidiEvent event = track.get(i);
+                    if (event.getMessage() instanceof MetaMessage meta) {
+                        if (meta.getType() == 0x51 && meta.getData().length >= 3) {
+                            byte[] d = meta.getData();
+                            int microsPerBeat = ((d[0] & 0xFF) << 16) |
+                                                ((d[1] & 0xFF) << 8)  |
+                                                 (d[2] & 0xFF);
+                            double bpm = 60_000_000.0 / microsPerBeat;
+                            chartData.addTempoEvent(new TempoEvent((int) event.getTick(), bpm));
+                        }
+                    }
+                }
+
                 if (!isGuitarTrack(trackName)) continue;
 
                 Map<Integer, Deque<Integer>> activeNotes = new HashMap<>();
@@ -34,13 +51,13 @@ public class MidiParser implements ChartSource {
 
                     MidiEvent event = track.get(i);
                     MidiMessage message = event.getMessage();
+                    int tick = (int) event.getTick();
 
                     if (message instanceof ShortMessage sm) {
 
                         int cmd      = sm.getCommand();
                         int note     = sm.getData1();
                         int velocity = sm.getData2();
-                        int tick     = (int) event.getTick();
 
                         boolean noteOn  = cmd == ShortMessage.NOTE_ON && velocity > 0;
                         boolean noteOff = cmd == ShortMessage.NOTE_OFF ||
