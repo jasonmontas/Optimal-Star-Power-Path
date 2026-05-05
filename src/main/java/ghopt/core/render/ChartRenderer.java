@@ -6,13 +6,13 @@ import ghopt.core.model.StarPowerPhrase;
 import ghopt.core.model.TimeSignatureEvent;
 
 import java.awt.*;
+import java.awt.geom.GeneralPath;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashSet;
 import java.util.List;
+import java.util.HashSet;
 import java.util.Set;
 import javax.imageio.ImageIO;
 
@@ -28,50 +28,54 @@ public class ChartRenderer {
         }
     }
 
-    public static void render(ChartData chartData, String outputFilePath) throws IOException {
-        render(chartData, Collections.emptyList(), outputFilePath);
+    public static void generateChartImage(ChartData chartData, String outputFilePath) throws IOException {
+        generateChartImage(chartData, outputFilePath, null);
     }
 
-    public static void render(ChartData chartData, List<Integer> activationTimes, String outputFilePath) throws IOException {
+    public static void generateChartImage(ChartData chartData, String outputFilePath, 
+                                          List<Integer> activationTimes) throws IOException {
+        // Create output directory if it doesn't exist
+        File outputFile = new File(outputFilePath);
+        File outputDir = outputFile.getParentFile();
+        if (outputDir != null && !outputDir.exists()) {
+            outputDir.mkdirs();
+        }
 
-        int width        = 4000;
-        int heightPerLayer = 600;
-        int margin       = 50;
-        int noteSize     = 20;
-        int laneHeight   = (heightPerLayer - 2 * margin) / 5;
-        int timeScale    = 2;
+        int width = 4000; // Increased width to make the image wider
+        int heightPerLayer = 600; // Reduced height per layer to make the image less tall
+        int margin = 50;
+        int noteSize = 20;
+        int laneSpacing = (heightPerLayer - 2 * margin) / 4;
+        int timeScale = 2;
 
-        int maxTime        = chartData.maxTick();
-        int layerSpanTicks = width * timeScale;
-        int totalLayers    = (maxTime / layerSpanTicks) + 1;
-        int totalHeight    = totalLayers * heightPerLayer;
+        int maxTime = chartData.getNotes().stream().mapToInt(Note::getTime).max().orElse(0);
+        int totalLayers = (maxTime / (width * timeScale)) + 1;
+        int totalHeight = totalLayers * heightPerLayer;
 
         BufferedImage image = new BufferedImage(width, totalHeight, BufferedImage.TYPE_INT_ARGB);
         Graphics2D g = image.createGraphics();
+
         g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
 
-        // Background
         g.setColor(Color.WHITE);
         g.fillRect(0, 0, width, totalHeight);
 
-        // Lane lines
         g.setColor(Color.LIGHT_GRAY);
         for (int layer = 0; layer < totalLayers; layer++) {
             int layerOffset = layer * heightPerLayer;
-            for (int i = 0; i <= 5; i++) {
-                int y = layerOffset + margin + i * laneHeight;
+            for (int i = 0; i < 5; i++) {
+                int y = layerOffset + margin + i * laneSpacing;
                 g.drawLine(margin, y, width - margin, y);
             }
         }
 
-        // Beat/bar timing grid lines
         List<TimingGridLine> timingGridLines = getTimingGridLines(chartData, maxTime);
         Stroke oldGridStroke = g.getStroke();
         for (TimingGridLine line : timingGridLines) {
             int tick = line.tick;
-            int layer = tick / layerSpanTicks;
+            int layer = tick / (width * timeScale);
             int layerOffset = layer * heightPerLayer;
-            int x = margin + (tick % layerSpanTicks) / timeScale;
+            int x = margin + (tick % (width * timeScale)) / timeScale;
             int yStart = layerOffset + margin;
             int yEnd = layerOffset + heightPerLayer - margin;
 
@@ -91,107 +95,222 @@ public class ChartRenderer {
         }
         g.setStroke(oldGridStroke);
 
-        // Dark separator line between rows
-        g.setColor(new Color(80, 80, 80));
-        g.setStroke(new BasicStroke(3));
-        for (int layer = 0; layer < totalLayers; layer++) {
-            int y = layer * heightPerLayer + margin;
-            g.drawLine(0, y, width, y);
-        }
-
-        // SP phrase highlight (light blue)
         g.setColor(new Color(173, 216, 230, 128));
         for (StarPowerPhrase phrase : chartData.getStarPowerPhrases()) {
-            int startLayer = phrase.getStartTick() / layerSpanTicks;
-            int endLayer   = phrase.getEndTick()   / layerSpanTicks;
+            int startLayer = (phrase.getStartTick() / (width * timeScale));
+            int endLayer = (phrase.getEndTick() / (width * timeScale));
+
             for (int layer = startLayer; layer <= endLayer; layer++) {
-                int layerOffset    = layer * heightPerLayer;
-                int layerStartTick = layer * layerSpanTicks;
-                int layerEndTick   = layerStartTick + layerSpanTicks;
-                int segStartTick   = Math.max(phrase.getStartTick(), layerStartTick);
-                int segEndTick     = Math.min(phrase.getEndTick(),   layerEndTick);
-                int xStart = margin + (segStartTick - layerStartTick) / timeScale;
-                int xEnd   = margin + (segEndTick   - layerStartTick) / timeScale;
+                int layerOffset = layer * heightPerLayer;
+                int xStart = margin + (layer == startLayer ? (phrase.getStartTick() % (width * timeScale)) / timeScale : 0);
+                int xEnd = margin + (layer == endLayer ? (phrase.getEndTick() % (width * timeScale)) / timeScale : width);
                 g.fillRect(xStart, layerOffset + margin, xEnd - xStart, heightPerLayer - 2 * margin);
             }
         }
 
-        // Notes
-        Color[] noteColors = {Color.GREEN, Color.RED, Color.YELLOW, Color.BLUE, Color.ORANGE};
-        for (Note note : chartData.getNotes()) {
-            int layer       = note.getTime() / layerSpanTicks;
-            int layerOffset = layer * heightPerLayer;
-            int layerStartTick = layer * layerSpanTicks;
-            int x = margin + (note.getTime() - layerStartTick) / timeScale;
-            if (note.isOpen()) {
-                g.setColor(Color.MAGENTA);
-                g.fillRect(x - 3, layerOffset + margin, 6, heightPerLayer - 2 * margin);
-            } else {
-                int lane = note.getType();
-                if (lane < 0 || lane > 4) continue;
-                int y = layerOffset + margin + lane * laneHeight + laneHeight / 2 - noteSize / 2;
-                g.setColor(noteColors[lane]);
-                g.fillOval(x, y, noteSize, noteSize);
+        // Draw activation times highlighted in orange/gold
+        if (activationTimes != null && !activationTimes.isEmpty()) {
+            Set<Integer> activationSet = new HashSet<>(activationTimes);
+            Color bandColor = new Color(255, 215, 0, 80);
+            Color lineColor = new Color(255, 180, 0);
+            Color labelBg = new Color(255, 200, 0);
+            Color labelText = new Color(0, 0, 0);
+
+            int bandHalfWidth = 12;
+            Font labelFont = new Font("SansSerif", Font.BOLD, 22);
+
+            for (int tick : activationSet) {
+                int layer = tick / (width * timeScale);
+                int layerOffset = layer * heightPerLayer;
+                int layerStartTick = layer * width * timeScale;
+                int x = margin + (tick - layerStartTick) / timeScale;
+
+                int topY = layerOffset + margin - 20;
+                int bottomY = layerOffset + heightPerLayer - margin + 20;
+                int bandH = bottomY - topY;
+
+                g.setColor(bandColor);
+                g.fillRect(x - bandHalfWidth, topY, bandHalfWidth * 2, bandH);
+
+                g.setColor(lineColor);
+                g.setStroke(new BasicStroke(5));
+                g.drawLine(x, topY, x, bottomY);
+
+                g.setFont(labelFont);
+                FontMetrics fm = g.getFontMetrics();
+                String label = "ACTIVATE!";
+                int labelW = fm.stringWidth(label) + 12;
+                int labelH = fm.getHeight() + 4;
+                int labelX = x - labelW / 2;
+                int labelY = topY - labelH - 4;
+
+                g.setColor(labelBg);
+                g.fillRoundRect(labelX, labelY, labelW, labelH, 8, 8);
+
+                g.setColor(new Color(180, 120, 0));
+                g.setStroke(new BasicStroke(2));
+                g.drawRoundRect(labelX, labelY, labelW, labelH, 8, 8);
+
+                g.setColor(labelText);
+                g.drawString(label, labelX + 6, labelY + fm.getAscent() + 2);
             }
         }
 
-        // ── SP activation markers ─────────────────────────────────────────
-        // Drawn last so they appear on top of everything else.
-        // Each marker is:
-        //   - A bright gold semi-transparent filled band across the full lane area
-        //   - A thick solid gold center line
-        //   - A bold "ACTIVATE!" label above the band
+        // Draw notes with colors based on type across layers, including sustains
+        Color[] noteColors = {Color.GREEN, Color.RED, Color.YELLOW, Color.BLUE, Color.ORANGE}; // types 0-4
+        Color openColor = Color.MAGENTA; // open note color (type 7)
+        for (Note note : chartData.getNotes()) {
+            int layer = note.getTime() / (width * timeScale);
+            int layerOffset = layer * heightPerLayer;
+            int x = margin + (note.getTime() % (width * timeScale)) / timeScale;
 
-        Set<Integer> activationSet = new HashSet<>(activationTimes);
-        Color bandColor   = new Color(255, 215, 0, 80);   // transparent gold fill
-        Color lineColor   = new Color(255, 180, 0);        // solid bright gold line
-        Color labelBg     = new Color(255, 200, 0);        // label background
-        Color labelText   = new Color(0, 0, 0);            // black text on label
+            boolean inStarPower = chartData.getStarPowerPhrases().stream()
+                .anyMatch(phrase -> phrase.containsTick(note.getTime()));
 
-        int bandHalfWidth = 12; // pixels either side of center line
-        Font labelFont    = new Font("SansSerif", Font.BOLD, 22);
+            if (note.isOpen()) {
+                int barWidth = Math.max(4, noteSize / 2);
+                int barX = x - barWidth / 2;
+                int barY = layerOffset + margin;
+                int barHeightFull = heightPerLayer - 2 * margin;
+                Color oc = inStarPower ? openColor.brighter() : openColor;
+                g.setColor(oc);
+                g.fillRect(barX, barY, barWidth, barHeightFull);
 
-        for (int tick : activationSet) {
-            int layer          = tick / layerSpanTicks;
-            int layerOffset    = layer * heightPerLayer;
-            int layerStartTick = layer * layerSpanTicks;
-            int x = margin + (tick - layerStartTick) / timeScale;
+                if (inStarPower) {
+                    Color borderColor = new Color(0, 0, 139);
+                    Stroke oldStroke = g.getStroke();
+                    Color oldColor = g.getColor();
+                    g.setColor(borderColor);
+                    g.setStroke(new BasicStroke(2));
+                    g.drawRect(barX, barY, barWidth, barHeightFull);
+                    g.setStroke(oldStroke);
+                    g.setColor(oldColor);
+                }
 
-            int topY    = layerOffset + margin - 20;
-            int bottomY = layerOffset + heightPerLayer - margin + 20;
-            int bandH   = bottomY - topY;
+                if (note.getDuration() > 0) {
+                    int sustainStart = note.getTime();
+                    int sustainEnd = note.getTime() + note.getDuration();
+                    int sustainStartLayer = sustainStart / (width * timeScale);
+                    int sustainEndLayer = sustainEnd / (width * timeScale);
 
-            // Filled gold band
-            g.setColor(bandColor);
-            g.fillRect(x - bandHalfWidth, topY, bandHalfWidth * 2, bandH);
+                    for (int sustainLayer = sustainStartLayer; sustainLayer <= sustainEndLayer; sustainLayer++) {
+                        int layerTickStart = sustainLayer * width * timeScale;
+                        int layerTickEnd = (sustainLayer + 1) * width * timeScale;
+                        int segmentStartTick = Math.max(sustainStart, layerTickStart);
+                        int segmentEndTick = Math.min(sustainEnd, layerTickEnd);
 
-            // Thick center line
-            g.setColor(lineColor);
-            g.setStroke(new BasicStroke(5));
-            g.drawLine(x, topY, x, bottomY);
+                        if (segmentEndTick <= segmentStartTick) {
+                            continue;
+                        }
 
-            // Label background pill
-            g.setFont(labelFont);
-            FontMetrics fm  = g.getFontMetrics();
-            String label    = "ACTIVATE!";
-            int labelW      = fm.stringWidth(label) + 12;
-            int labelH      = fm.getHeight() + 4;
-            int labelX      = x - labelW / 2;
-            int labelY      = topY - labelH - 4;
+                        int segmentStartX = margin + (segmentStartTick - layerTickStart) / timeScale;
+                        int segmentEndX = margin + (segmentEndTick - layerTickStart) / timeScale;
+                        int segmentLayerOffset = sustainLayer * heightPerLayer;
+                        int tailY = segmentLayerOffset + margin + (heightPerLayer - 2 * margin) / 2 - 2;
+                        int tailWidth = Math.max(1, segmentEndX - segmentStartX);
 
-            g.setColor(labelBg);
-            g.fillRoundRect(labelX, labelY, labelW, labelH, 8, 8);
+                        g.fillRect(segmentStartX, tailY, tailWidth, 4);
+                    }
+                }
 
-            g.setColor(new Color(180, 120, 0)); // dark gold border
-            g.setStroke(new BasicStroke(2));
-            g.drawRoundRect(labelX, labelY, labelW, labelH, 8, 8);
+                if (note.isForced()) {
+                    Color oldColor = g.getColor();
+                    Stroke oldStroke = g.getStroke();
+                    g.setColor(Color.BLACK);
+                    g.setStroke(new BasicStroke(2));
+                    g.drawRect(barX, barY, barWidth, barHeightFull);
+                    g.setStroke(oldStroke);
+                    g.setColor(oldColor);
+                }
 
-            g.setColor(labelText);
-            g.drawString(label, labelX + 6, labelY + fm.getAscent() + 2);
+                if (note.isTap()) {
+                    int tickY = barY + barHeightFull / 2;
+                    g.setColor(Color.WHITE);
+                    g.fillRect(x - 2, tickY - 2, 4, 4);
+                }
+            } else {
+                int lane = note.getType();
+                if (lane < 0 || lane > 4) continue;
+
+                int y = layerOffset + margin + lane * laneSpacing - noteSize / 2;
+                Color col = inStarPower ? noteColors[lane].brighter() : noteColors[lane];
+
+                if (inStarPower) {
+                    int cx = x + noteSize / 2;
+                    int cy = y + noteSize / 2;
+                    int outer = Math.max(8, noteSize * 3 / 4);
+                    int inner = Math.max(4, noteSize / 3);
+                    Shape star = createStar(cx, cy, outer, inner, 5);
+                    g.setColor(col);
+                    g.fill(star);
+
+                    Color outline = col.darker();
+                    Stroke oldStroke = g.getStroke();
+                    Color oldColor = g.getColor();
+                    g.setColor(outline);
+                    g.setStroke(new BasicStroke(2));
+                    g.draw(star);
+                    g.setStroke(oldStroke);
+                    g.setColor(oldColor);
+                } else {
+                    g.setColor(col);
+                    g.fillOval(x, y, noteSize, noteSize);
+                }
+
+                if (note.getDuration() > 0) {
+                    int sustainStart = note.getTime();
+                    int sustainEnd = note.getTime() + note.getDuration();
+                    int sustainStartLayer = sustainStart / (width * timeScale);
+                    int sustainEndLayer = sustainEnd / (width * timeScale);
+
+                    Color oldColor = g.getColor();
+                    g.setColor(col);
+                    for (int sustainLayer = sustainStartLayer; sustainLayer <= sustainEndLayer; sustainLayer++) {
+                        int layerTickStart = sustainLayer * width * timeScale;
+                        int layerTickEnd = (sustainLayer + 1) * width * timeScale;
+                        int segmentStartTick = Math.max(sustainStart, layerTickStart);
+                        int segmentEndTick = Math.min(sustainEnd, layerTickEnd);
+
+                        if (segmentEndTick <= segmentStartTick) {
+                            continue;
+                        }
+
+                        int segmentStartX = margin + (segmentStartTick - layerTickStart) / timeScale;
+                        int segmentEndX = margin + (segmentEndTick - layerTickStart) / timeScale;
+                        int segmentLayerOffset = sustainLayer * heightPerLayer;
+                        int segmentY = segmentLayerOffset + margin + lane * laneSpacing - 2;
+                        int segmentWidth = Math.max(1, segmentEndX - segmentStartX);
+
+                        g.fillRect(segmentStartX, segmentY, segmentWidth, 4);
+                    }
+                    g.setColor(oldColor);
+                }
+            }
         }
 
         g.dispose();
         ImageIO.write(image, "png", new File(outputFilePath));
+    }
+
+    private static Shape createStar(int cx, int cy, int outerRadius, int innerRadius, int points) {
+        GeneralPath path = new GeneralPath();
+        double angle = -Math.PI / 2;
+        double step = Math.PI / points;
+
+        for (int i = 0; i < points * 2; i++) {
+            double r = (i % 2 == 0) ? outerRadius : innerRadius;
+            double px = cx + Math.cos(angle) * r;
+            double py = cy + Math.sin(angle) * r;
+            if (i == 0) {
+                path.moveTo(px, py);
+            } else {
+                path.lineTo(px, py);
+            }
+            angle += step;
+        }
+
+        path.closePath();
+        return path;
     }
 
     private static List<TimingGridLine> getTimingGridLines(ChartData chartData, int maxTick) {

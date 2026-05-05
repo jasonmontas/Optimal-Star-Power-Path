@@ -170,7 +170,7 @@ public class OptimizerGui extends JFrame {
                             StarPowerOptimizer.findOptimalPath(data);
 
                     String outPath = path.replaceAll("\\.(chart|mid)$", "_sp_opt.png");
-                    ChartRenderer.render(data, optimalPath.activationTimes, outPath);
+                    ChartRenderer.generateChartImage(data, outPath, optimalPath.activationTimes);
                     result = ImageIO.read(new File(outPath));
 
                     StringBuilder sb = new StringBuilder();

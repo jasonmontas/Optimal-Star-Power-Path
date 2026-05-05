@@ -31,7 +31,7 @@ public class Main {
             System.out.println("Optimal score: " + path.totalScore);
             System.out.println("Activation ticks: " + path.activationTimes);
 
-            ChartRenderer.render(data, path.activationTimes, outputPath);
+            ChartRenderer.generateChartImage(data, outputPath, path.activationTimes);
             System.out.println("Chart image generated at: " + outputPath);
 
         } catch (Exception e) {
